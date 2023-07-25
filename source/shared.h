@@ -3,7 +3,7 @@
 
 //#define RADIO_BUF 32
 #define PASS_BUF 32
-#define PLAYER_MAX 64
+#define PLAYER_MAX 128
 #define NAME_BUF 32
 
 #define CMD_RENAME 1
@@ -13,7 +13,7 @@
 #define CMD_BUF 16
 
 struct Clients {
-	short clientID;
+	int clientID;
 	float pos[3];
 	float volume_gm;
 	float volume_ts;
@@ -22,7 +22,8 @@ struct Clients {
 };
 
 struct Status {
-	short clientID;
+	int clientID;
+	bool inChannel;
 	char name[NAME_BUF];
 	short tslibV;
 	short gspeakV;
@@ -38,7 +39,7 @@ struct Status {
 	int command;
 };
 
-bool gs_inChannel(Status* status);
+//bool gs_inChannel(Status* status);
 bool gs_gmodOnline(Status* status);
 bool gs_tsOnline(Status* status);
 

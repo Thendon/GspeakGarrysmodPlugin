@@ -13,7 +13,8 @@
 
 using namespace GarrysMod::Lua;
 
-struct Clients_local {
+struct Clients_local
+{
 	int clientID;
 	int entID;
 	int radioID;
@@ -23,7 +24,8 @@ struct Clients* clients;
 struct Clients_local* clients_local;
 struct Status* status;
 
-struct CMD {
+struct CMD
+{
 	int key;
 	int callback;
 
@@ -42,61 +44,73 @@ TCHAR statusName[] = TEXT("Local\\GMapV");
 // GSPEAK FUNCTIONS
 //*************************************
 
-void gs_printError(GarrysMod::Lua::ILuaBase* LUA, char* error_string, int error_code = -1) 
+void gs_printError(GarrysMod::Lua::ILuaBase* LUA, char* error_string, int error_code = -1)
 {
 	LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
 	LUA->GetField(-1, "print");
 	LUA->PushString(error_string);
 
-	if (error_code == -1) {
+	if (error_code == -1)
+	{
 		LUA->Call(1, 0);
 	}
-	else {
+	else
+	{
 		LUA->PushNumber(error_code);
 		LUA->Call(2, 0);
 	}
 	LUA->Pop();
 }
 
-bool gs_openMapFile(GarrysMod::Lua::ILuaBase* LUA, HANDLE* hMapFile, TCHAR* name, unsigned int buf_size) 
+bool gs_openMapFile(GarrysMod::Lua::ILuaBase* LUA, HANDLE* hMapFile, TCHAR* name, unsigned int buf_size)
 {
 	*hMapFile = OpenFileMapping(FILE_MAP_ALL_ACCESS, FALSE, name);
-	if (*hMapFile == NULL) {
+	if (*hMapFile == NULL)
+	{
 		int code = GetLastError();
-		gs_printError(LUA, "[Gspeak] open map warning ", code);
-		if (code == 5) {
+		gs_printError(LUA, "[Gspeak] open map state ", code);
+		if (code == 5)
+		{
 			gs_printError(LUA, "[Gspeak] access denied - restart Teamspeak3 with Administrator!");
-			return true;
+			return false;
 		}
-		else if (code == 2) {
+		else if (code == 2)
+		{
 			*hMapFile = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, buf_size, name);
-			if (*hMapFile == NULL) {
+			if (*hMapFile == NULL)
+			{
 				gs_printError(LUA, "[Gspeak] critical error ", GetLastError());
-				return true;
+				return false;
 			}
+
+			//init map file here?
 		}
-		else {
+		else
+		{
 			gs_printError(LUA, "[Gspeak] critical error ", GetLastError());
-			return true;
+			return false;
 		}
 	}
-	return false;
+	return true;
 }
 
-LUA_FUNCTION ( gs_connectTS )
+LUA_FUNCTION(gs_connectTS)
 {
-	if (hMapFileO != NULL && hMapFileV != NULL) {
+	if (hMapFileO != NULL && hMapFileV != NULL)
+	{
 		LUA->PushBool(true);
 		return 1;
 	}
 
-	if (gs_openMapFile(LUA, &hMapFileO, clientName, sizeof(Clients) * PLAYER_MAX) == 1) {
+	if (!gs_openMapFile(LUA, &hMapFileO, clientName, sizeof(Clients) * PLAYER_MAX))
+	{
 		LUA->PushBool(false);
 		return 1;
 	}
 	clients = (Clients*)MapViewOfFile(hMapFileO, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Clients) * PLAYER_MAX);
 	clients_local = (Clients_local*)malloc(sizeof(Clients_local) * PLAYER_MAX);
-	if (clients == NULL) {
+	if (clients == NULL)
+	{
 		gs_printError(LUA, "[Gspeak] mapview error ", GetLastError());
 		CloseHandle(hMapFileO);
 		hMapFileO = NULL;
@@ -104,18 +118,21 @@ LUA_FUNCTION ( gs_connectTS )
 		return 1;
 	}
 
-	if (gs_openMapFile(LUA, &hMapFileV, statusName, sizeof(Status))) {
+	if (!gs_openMapFile(LUA, &hMapFileV, statusName, sizeof(Status)))
+	{
 		LUA->PushBool(false);
 		return 1;
 	}
 	status = (Status*)MapViewOfFile(hMapFileV, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Status));
-	if (status == NULL) {
+	if (status == NULL)
+	{
 		gs_printError(LUA, "[Gspeak] mapview error ", GetLastError());
 		CloseHandle(hMapFileV);
 		hMapFileV = NULL;
 		LUA->PushBool(false);
 		return 1;
 	}
+
 	status->tslibV = TSLIB_VERSION;
 
 	LUA->PushBool(true);
@@ -140,15 +157,18 @@ int gs_searchPlayer(int clientID, bool* exist)
 	int del_spot = -1;
 	int spot = 0;
 
-	for (spot; clients[spot].clientID != 0 && spot < PLAYER_MAX; spot++) {
+	for (spot; clients[spot].clientID != 0 && spot < PLAYER_MAX; spot++)
+	{
 		//return already claimed spot
-		if (clients[spot].clientID == clientID) {
+		if (clients[spot].clientID == clientID)
+		{
 			*exist = true;
 			return spot;
 		}
 
 		//Check if spot free
-		if (clients[spot].clientID == -1) {
+		if (clients[spot].clientID == -1)
+		{
 			//set first free spot
 			if (free_spot == -1)
 				free_spot = spot;
@@ -166,7 +186,8 @@ int gs_searchPlayer(int clientID, bool* exist)
 
 	//clear spots from first deletable spot to next clientID = 0
 	if (del_spot != -1)
-		for (int i = del_spot; del_spot <= spot && i < PLAYER_MAX; i++) {
+		for (int i = del_spot; del_spot <= spot && i < PLAYER_MAX; i++)
+		{
 			clients[i].clientID = 0;
 			clients_local[i].clientID = 0;
 		}
@@ -181,7 +202,7 @@ int gs_searchPlayer(int clientID, bool* exist)
 	return del_spot;
 }
 
-LUA_FUNCTION(gs_sendSettings) 
+LUA_FUNCTION(gs_sendSettings)
 {
 	LUA->CheckType(1, GarrysMod::Lua::Type::STRING); char* password = (char*)LUA->GetString(1);
 	LUA->CheckType(2, GarrysMod::Lua::Type::NUMBER); short radio_downsampler = (short)LUA->GetNumber(2);
@@ -189,7 +210,8 @@ LUA_FUNCTION(gs_sendSettings)
 	LUA->CheckType(4, GarrysMod::Lua::Type::NUMBER); float radio_volume = (float)LUA->GetNumber(4);
 	LUA->CheckType(5, GarrysMod::Lua::Type::NUMBER); float radio_volume_noise = (float)LUA->GetNumber(5);
 
-	if (strlen(password) >= PASS_BUF) {
+	if (strlen(password) >= PASS_BUF)
+	{
 		LUA->PushBool(false);
 		return 1;
 	}
@@ -204,9 +226,10 @@ LUA_FUNCTION(gs_sendSettings)
 	return 1;
 }
 
-void gs_pushCMD(GarrysMod::Lua::ILuaBase* LUA, int key, int callback) 
+void gs_pushCMD(GarrysMod::Lua::ILuaBase* LUA, int key, int callback)
 {
-	if (commandList.size() >= CMD_BUF) {
+	if (commandList.size() >= CMD_BUF)
+	{
 		gs_printError(LUA, "CommandList full - check for sendName / forceMove spam");
 		return;
 	}
@@ -219,7 +242,8 @@ LUA_FUNCTION(gs_sendName)
 	LUA->CheckType(1, GarrysMod::Lua::Type::STRING); char* name = (char*)LUA->GetString(1);
 
 	int callback = -1;
-	if (LUA->GetType(2) == GarrysMod::Lua::Type::FUNCTION) {
+	if (LUA->GetType(2) == GarrysMod::Lua::Type::FUNCTION)
+	{
 		LUA->Push(2);
 		callback = LUA->ReferenceCreate();
 	}
@@ -255,15 +279,18 @@ LUA_FUNCTION(gs_forceMove)
 LUA_FUNCTION(gs_update)
 {
 	//Free reference
-	if (status->command == -10) {
+	if (status->command == -10)
+	{
 		LUA->ReferenceFree(commandList.front().callback);
 		status->command = 0;
 	}
-	else if (status->command < 0) {
+	else if (status->command < 0)
+	{
 		//execute callback function of given cmd; -2 = ERROR; -1 = SUCCESS
 		CMD result = commandList.front();
 
-		if (result.callback >= 0) {
+		if (result.callback >= 0)
+		{
 			LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
 			LUA->ReferencePush(result.callback);
 			LUA->PushBool((bool)(status->command == -1));
@@ -280,7 +307,8 @@ LUA_FUNCTION(gs_update)
 	}
 
 	//Ready for next in list
-	if (status->command == 0 && commandList.size() > 0) {
+	if (status->command == 0 && commandList.size() > 0)
+	{
 		status->command = commandList.front().key;
 	}
 
@@ -297,10 +325,10 @@ LUA_FUNCTION(gs_sendClientPos)
 	LUA->CheckType(6, GarrysMod::Lua::Type::NUMBER); float upZ = (float)LUA->GetNumber(6);
 
 	status->forward[0] = forX;
-	status->forward[1] = forZ; //might be wrong
+	status->forward[1] = forZ;
 	status->forward[2] = forY;
 	status->upward[0] = upX;
-	status->upward[1] = upZ; //might be wrong
+	status->upward[1] = upZ;
 	status->upward[2] = upY;
 	return 0;
 }
@@ -316,17 +344,20 @@ LUA_FUNCTION(gs_sendPos)
 	LUA->CheckType(7, GarrysMod::Lua::Type::BOOL); bool isRadio = (bool)LUA->GetBool(7);
 
 	int radioID = -1;
-	if (isRadio == true) {
+	if (isRadio == true)
+	{
 		LUA->CheckType(8, GarrysMod::Lua::Type::NUMBER); radioID = (int)LUA->GetNumber(8);
 	}
 
 	bool exist = false;
 	int i = gs_searchPlayer(clientID, &exist);
 
-	if (exist) {
+	if (exist)
+	{
 		//if (clients_local[i].clientID == clientID) {
 			//If same sending device update data
-		if (clients_local[i].radioID == radioID && clients_local[i].entID == entID) {
+		if (clients_local[i].radioID == radioID && clients_local[i].entID == entID)
+		{
 			clients[i].volume_gm = volume;
 			clients[i].pos[0] = x;
 			clients[i].pos[1] = z;
@@ -334,7 +365,8 @@ LUA_FUNCTION(gs_sendPos)
 			return 0;
 		}
 		//If other device more far away than stored device return
-		else if (volume < clients[i].volume_gm) {
+		else if (volume < clients[i].volume_gm)
+		{
 			return 0;
 		}
 		//}
@@ -369,12 +401,15 @@ LUA_FUNCTION(gs_delPos)
 	LUA->CheckType(2, GarrysMod::Lua::Type::BOOL); bool isRadio = (bool)LUA->GetBool(2);
 
 	int radioID = -1;
-	if (isRadio == true) {
+	if (isRadio == true)
+	{
 		LUA->CheckType(3, GarrysMod::Lua::Type::NUMBER); radioID = (int)LUA->GetNumber(3);
 	}
 
-	for (int i = 0; clients[i].clientID != 0 && i < PLAYER_MAX; i++) {
-		if (clients_local[i].entID == entID && clients_local[i].radioID == radioID) {
+	for (int i = 0; clients[i].clientID != 0 && i < PLAYER_MAX; i++)
+	{
+		if (clients_local[i].entID == entID && clients_local[i].radioID == radioID)
+		{
 			clients[i].clientID = -1;
 			clients_local[i].clientID = -1;
 			break;
@@ -394,7 +429,8 @@ LUA_FUNCTION(gs_delPos)
 
 LUA_FUNCTION(gs_delAll)
 {
-	for (int i = 0; clients[i].clientID != 0 && i < PLAYER_MAX; i++) {
+	for (int i = 0; clients[i].clientID != 0 && i < PLAYER_MAX; i++)
+	{
 		clients[i].clientID = 0;
 		clients_local[i].clientID = 0;
 	}
@@ -403,15 +439,19 @@ LUA_FUNCTION(gs_delAll)
 
 LUA_FUNCTION(gs_getTsID)
 {
-	if (status->gspeakV == 0) LUA->PushNumber(-1);
-	else LUA->PushNumber(status->clientID);
+	if (status->gspeakV == 0)
+		LUA->PushNumber(-1);
+	else
+		LUA->PushNumber(status->clientID);
 	return 1;
 }
 
 LUA_FUNCTION(gs_getInChannel)
 {
-	if (status->clientID == -1 || status->gspeakV == 0) LUA->PushBool(false);
-	else LUA->PushBool(true);
+	if (!status->inChannel || status->gspeakV == 0)
+		LUA->PushBool(false);
+	else
+		LUA->PushBool(true);
 	return 1;
 }
 
@@ -420,7 +460,8 @@ LUA_FUNCTION(gs_getArray)
 	char it[3];
 	LUA->PushSpecial(GarrysMod::Lua::Type::TABLE);
 	LUA->CreateTable();
-	for (int i = 0; i < PLAYER_MAX; i++) {
+	for (int i = 0; i < PLAYER_MAX; i++)
+	{
 		LUA->PushNumber(clients[i].clientID);
 		sprintf_s(it, sizeof(it), "%d", i);
 		LUA->SetField(-2, it);
@@ -430,10 +471,12 @@ LUA_FUNCTION(gs_getArray)
 
 LUA_FUNCTION(gs_talkCheck)
 {
-	if (status->talking == true) {
+	if (status->talking == true)
+	{
 		LUA->PushBool(true);
 	}
-	else {
+	else
+	{
 		LUA->PushBool(false);
 	}
 	return 1;
@@ -462,8 +505,10 @@ LUA_FUNCTION(gs_getAllID)
 	char it[3];
 	LUA->PushSpecial(GarrysMod::Lua::Type::TABLE);
 	LUA->CreateTable();
-	for (int i = 0; clients[i].clientID != 0 && i < PLAYER_MAX; i++) {
-		if (clients[i].clientID != -1) {
+	for (int i = 0; clients[i].clientID != 0 && i < PLAYER_MAX; i++)
+	{
+		if (clients[i].clientID != -1)
+		{
 			LUA->CreateTable();
 			LUA->PushNumber(clients_local[i].entID); LUA->SetField(-2, "ent_id");
 			LUA->PushBool(clients[i].radio); LUA->SetField(-2, "radio");
