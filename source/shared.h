@@ -8,9 +8,19 @@
 
 #define CMD_RENAME 1
 #define CMD_FORCEMOVE 2
-#define CMD_KICK 3
-#define CMD_BAN 4
+//#define CMD_KICK 3
+//#define CMD_BAN 4
 #define CMD_BUF 16
+
+//struct AudioSource
+//{
+//	int clientId;
+//	int entityId;
+//	float pos[3];
+//	float volume_gm;
+//	float volume_ts;
+//	bool talking;
+//};
 
 struct Clients {
 	int clientID;
@@ -37,9 +47,12 @@ struct Status {
 	bool status;
 	bool talking;
 	int command;
+
+	char channelName[NAME_BUF];
+	int channelId;
 };
 
-//bool gs_inChannel(Status* status);
+int gs_findClientIndex(const Clients* clients, int clientID);
 bool gs_gmodOnline(Status* status);
 bool gs_tsOnline(Status* status);
 

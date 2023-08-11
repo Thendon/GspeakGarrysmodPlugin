@@ -10,15 +10,21 @@
 #include <list>
 #include <Windows.h>
 #include "shared.h"
+#include <ctime>
+#include <iostream>
+#include <string>
 
 using namespace GarrysMod::Lua;
 
+//move this to lua?
 struct Clients_local
 {
 	int clientID;
 	int entID;
 	int radioID;
 };
+
+//struct AudioSource* sources;
 
 struct Clients* clients;
 struct Clients_local* clients_local;
@@ -33,6 +39,7 @@ struct CMD
 };
 
 std::list<CMD> commandList;
+std::list<short> avaliableSpots;
 
 HANDLE hMapFileO;
 HANDLE hMapFileV;
@@ -62,6 +69,9 @@ void gs_printError(GarrysMod::Lua::ILuaBase* LUA, char* error_string, int error_
 	LUA->Pop();
 }
 
+//TODO: concurrency should be an issue with this whole idea actually
+// here might be a solution:
+// https://learn.microsoft.com/en-us/windows/win32/sync/using-named-objects
 bool gs_openMapFile(GarrysMod::Lua::ILuaBase* LUA, HANDLE* hMapFile, TCHAR* name, unsigned int buf_size)
 {
 	*hMapFile = OpenFileMapping(FILE_MAP_ALL_ACCESS, FALSE, name);
@@ -83,7 +93,8 @@ bool gs_openMapFile(GarrysMod::Lua::ILuaBase* LUA, HANDLE* hMapFile, TCHAR* name
 				return false;
 			}
 
-			//init map file here?
+			//init map file here
+			//init concurrency stuff here
 		}
 		else
 		{
@@ -108,7 +119,10 @@ LUA_FUNCTION(gs_connectTS)
 		return 1;
 	}
 	clients = (Clients*)MapViewOfFile(hMapFileO, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Clients) * PLAYER_MAX);
-	clients_local = (Clients_local*)malloc(sizeof(Clients_local) * PLAYER_MAX);
+	clients_local = new Clients_local[PLAYER_MAX]; //(Clients_local*)malloc(sizeof(Clients_local) * PLAYER_MAX);
+	for (short i = 0; i < PLAYER_MAX; i++)
+		avaliableSpots.push_back(i);
+
 	if (clients == NULL)
 	{
 		gs_printError(LUA, "[Gspeak] mapview error ", GetLastError());
@@ -141,66 +155,93 @@ LUA_FUNCTION(gs_connectTS)
 
 void gs_discoTS()
 {
+	status->tslibV = 0;
+
 	UnmapViewOfFile(clients);
 	CloseHandle(hMapFileO);
 	hMapFileO = NULL;
 	clients = NULL;
+	if (clients_local != NULL)
+	{
+		delete[] clients_local;
+		clients_local = NULL;
+	}
 	UnmapViewOfFile(status);
 	CloseHandle(hMapFileV);
 	hMapFileV = NULL;
 	status = NULL;
 }
 
-int gs_searchPlayer(int clientID, bool* exist)
+int gs_takeAvaliableSpot()
 {
-	int free_spot = -1;
-	int del_spot = -1;
-	int spot = 0;
-
-	for (spot; clients[spot].clientID != 0 && spot < PLAYER_MAX; spot++)
+	//no avaliable spots => try override random spot
+	if (avaliableSpots.size() == 0)
 	{
-		//return already claimed spot
-		if (clients[spot].clientID == clientID)
-		{
-			*exist = true;
-			return spot;
-		}
-
-		//Check if spot free
-		if (clients[spot].clientID == -1)
-		{
-			//set first free spot
-			if (free_spot == -1)
-				free_spot = spot;
-			//set first deletable spot
-			if (del_spot == -1)
-				del_spot = spot;
-		}
-
-		//Check if spot not free
-		if (clients[spot].clientID > -1)
-			//reset deletable spot
-			if (del_spot != -1)
-				del_spot = -1;
+		srand(time(nullptr));
+		return rand() % PLAYER_MAX;
 	}
 
-	//clear spots from first deletable spot to next clientID = 0
-	if (del_spot != -1)
-		for (int i = del_spot; del_spot <= spot && i < PLAYER_MAX; i++)
-		{
-			clients[i].clientID = 0;
-			clients_local[i].clientID = 0;
-		}
+	short index = avaliableSpots.front();
+	avaliableSpots.pop_front();
 
-	//return free spot
-	if (free_spot > -1)
-		return free_spot;
-	//return first avaliable spot if nothing was deleted
-	if (del_spot == -1)
-		return spot;
-	//return first deleted spot
-	return del_spot;
+	return (int)index;
 }
+
+void gs_addAvaliableSpot(int index)
+{
+	avaliableSpots.push_back((short)index);
+}
+
+//int gs_searchPlayerObsolete(int clientID, bool* exist)
+//{
+//	int free_spot = -1;
+//	int del_spot = -1;
+//	int spot = 0;
+//
+//	for (spot; clients[spot].clientID != 0 && spot < PLAYER_MAX; spot++)
+//	{
+//		//return already claimed spot
+//		if (clients[spot].clientID == clientID)
+//		{
+//			*exist = true;
+//			return spot;
+//		}
+//
+//		//Check if spot free
+//		if (clients[spot].clientID == -1)
+//		{
+//			//set first free spot
+//			if (free_spot == -1)
+//				free_spot = spot;
+//			//set first deletable spot
+//			if (del_spot == -1)
+//				del_spot = spot;
+//		}
+//
+//		//Check if spot not free
+//		if (clients[spot].clientID > -1)
+//			//reset deletable spot
+//			if (del_spot != -1)
+//				del_spot = -1;
+//	}
+//
+//	//clear spots from first deletable spot to next clientID = 0
+//	if (del_spot != -1)
+//		for (int i = del_spot; del_spot <= spot && i < PLAYER_MAX; i++)
+//		{
+//			clients[i].clientID = 0;
+//			clients_local[i].clientID = 0;
+//		}
+//
+//	//return free spot
+//	if (free_spot > -1)
+//		return free_spot;
+//	//return first avaliable spot if nothing was deleted
+//	if (del_spot == -1)
+//		return spot;
+//	//return first deleted spot
+//	return del_spot;
+//}
 
 LUA_FUNCTION(gs_sendSettings)
 {
@@ -279,12 +320,12 @@ LUA_FUNCTION(gs_forceMove)
 LUA_FUNCTION(gs_update)
 {
 	//Free reference
-	if (status->command == -10)
+	/*if (status->command == -10)
 	{
 		LUA->ReferenceFree(commandList.front().callback);
 		status->command = 0;
-	}
-	else if (status->command < 0)
+	}*/
+	if (status->command < 0)
 	{
 		//execute callback function of given cmd; -2 = ERROR; -1 = SUCCESS
 		CMD result = commandList.front();
@@ -333,6 +374,10 @@ LUA_FUNCTION(gs_sendClientPos)
 	return 0;
 }
 
+//todo: 
+// * list of ents instead of players
+// * players are attached to ent
+// * mix player & ent signal effects
 LUA_FUNCTION(gs_sendPos)
 {
 	LUA->CheckType(1, GarrysMod::Lua::Type::NUMBER); int clientID = (int)LUA->GetNumber(1);
@@ -349,40 +394,44 @@ LUA_FUNCTION(gs_sendPos)
 		LUA->CheckType(8, GarrysMod::Lua::Type::NUMBER); radioID = (int)LUA->GetNumber(8);
 	}
 
-	bool exist = false;
-	int i = gs_searchPlayer(clientID, &exist);
+	//bool exist = false;
+	//int i = gs_searchPlayer(clientID, &exist);
+	int index = gs_findClientIndex(clients, clientID);
 
-	if (exist)
+	if (index != -1)
 	{
-		//if (clients_local[i].clientID == clientID) {
-			//If same sending device update data
-		if (clients_local[i].radioID == radioID && clients_local[i].entID == entID)
+		//Update data
+		if (clients_local[index].radioID == radioID && clients_local[index].entID == entID)
 		{
-			clients[i].volume_gm = volume;
-			clients[i].pos[0] = x;
-			clients[i].pos[1] = z;
-			clients[i].pos[2] = y;
+			clients[index].volume_gm = volume;
+			clients[index].pos[0] = x;
+			clients[index].pos[1] = z;
+			clients[index].pos[2] = y;
 			return 0;
 		}
-		//If other device more far away than stored device return
-		else if (volume < clients[i].volume_gm)
+		//Ignore further away data
+		else if (volume < clients[index].volume_gm)
 		{
 			return 0;
 		}
-		//}
+		//Override with closer data
+	}
+	else
+	{
+		//Add new data
+		int index = gs_takeAvaliableSpot();
 	}
 
-	//Add new data
-	clients[i].clientID = clientID;
-	clients[i].volume_gm = volume;
-	clients[i].pos[0] = x;
-	clients[i].pos[1] = z;
-	clients[i].pos[2] = y;
-	clients[i].radio = isRadio;
+	clients[index].clientID = clientID;
+	clients[index].volume_gm = volume;
+	clients[index].pos[0] = x;
+	clients[index].pos[1] = z;
+	clients[index].pos[2] = y;
+	clients[index].radio = isRadio;
 
-	clients_local[i].clientID = clientID;
-	clients_local[i].entID = entID;
-	clients_local[i].radioID = radioID;
+	clients_local[index].clientID = clientID;
+	clients_local[index].entID = entID;
+	clients_local[index].radioID = radioID;
 
 	LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
 	LUA->GetField(-1, "gspeak");
@@ -395,6 +444,7 @@ LUA_FUNCTION(gs_sendPos)
 	return 0;
 }
 
+//TODO: remove entid or radioid everywhere
 LUA_FUNCTION(gs_delPos)
 {
 	LUA->CheckType(1, GarrysMod::Lua::Type::NUMBER); int entID = (int)LUA->GetNumber(1);
@@ -406,12 +456,13 @@ LUA_FUNCTION(gs_delPos)
 		LUA->CheckType(3, GarrysMod::Lua::Type::NUMBER); radioID = (int)LUA->GetNumber(3);
 	}
 
-	for (int i = 0; clients[i].clientID != 0 && i < PLAYER_MAX; i++)
+	for (int i = 0; i < PLAYER_MAX; i++)
 	{
 		if (clients_local[i].entID == entID && clients_local[i].radioID == radioID)
 		{
-			clients[i].clientID = -1;
-			clients_local[i].clientID = -1;
+			clients[i].clientID = 0;
+			clients_local[i].clientID = 0;
+			gs_addAvaliableSpot(i);
 			break;
 		}
 	}
@@ -429,7 +480,7 @@ LUA_FUNCTION(gs_delPos)
 
 LUA_FUNCTION(gs_delAll)
 {
-	for (int i = 0; clients[i].clientID != 0 && i < PLAYER_MAX; i++)
+	for (int i = 0; i < PLAYER_MAX; i++)
 	{
 		clients[i].clientID = 0;
 		clients_local[i].clientID = 0;
@@ -440,7 +491,7 @@ LUA_FUNCTION(gs_delAll)
 LUA_FUNCTION(gs_getTsID)
 {
 	if (status->gspeakV == 0)
-		LUA->PushNumber(-1);
+		LUA->PushNumber(0);
 	else
 		LUA->PushNumber(status->clientID);
 	return 1;
@@ -462,6 +513,9 @@ LUA_FUNCTION(gs_getArray)
 	LUA->CreateTable();
 	for (int i = 0; i < PLAYER_MAX; i++)
 	{
+		if (clients[i].clientID == 0)
+			continue;
+
 		LUA->PushNumber(clients[i].clientID);
 		sprintf_s(it, sizeof(it), "%d", i);
 		LUA->SetField(-2, it);
@@ -500,24 +554,45 @@ LUA_FUNCTION(gs_getTslibVersion)
 	return 1;
 }
 
+LUA_FUNCTION(gs_tick)
+{
+	for (int i = 0; i < PLAYER_MAX; i++)
+	{
+		if (clients[i].clientID == 0)
+			continue;
+
+		LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
+		LUA->GetField(-1, "gspeak");
+		LUA->GetField(-1, "SetPlayerTeamspeakData");
+		LUA->PushNumber(clients_local[i].entID);
+		LUA->PushNumber(clients[i].volume_ts);
+		LUA->PushBool(clients[i].talking);
+		LUA->Call(3, 0);
+		LUA->Pop();
+	}
+	return 0;
+}
+
+//obsolete
 LUA_FUNCTION(gs_getAllID)
 {
-	char it[3];
+	//char it[3];
 	LUA->PushSpecial(GarrysMod::Lua::Type::TABLE);
 	LUA->CreateTable();
-	for (int i = 0; clients[i].clientID != 0 && i < PLAYER_MAX; i++)
+	for (int i = 0; i < PLAYER_MAX; i++)
 	{
-		if (clients[i].clientID != -1)
-		{
-			LUA->CreateTable();
-			LUA->PushNumber(clients_local[i].entID); LUA->SetField(-2, "ent_id");
-			LUA->PushBool(clients[i].radio); LUA->SetField(-2, "radio");
-			LUA->PushNumber(clients_local[i].radioID); LUA->SetField(-2, "radio_id");
-			LUA->PushNumber(clients[i].volume_ts); LUA->SetField(-2, "volume");
-			LUA->PushBool(clients[i].talking); LUA->SetField(-2, "talking");
-			sprintf_s(it, sizeof(it), "%d", i);
-			LUA->SetField(-2, it);
-		}
+		if (clients[i].clientID == 0)
+			continue;
+		
+		LUA->CreateTable();
+		LUA->PushNumber(clients_local[i].entID); LUA->SetField(-2, "ent_id");
+		LUA->PushBool(clients[i].radio); LUA->SetField(-2, "radio");
+		LUA->PushNumber(clients_local[i].radioID); LUA->SetField(-2, "radio_id");
+		LUA->PushNumber(clients[i].volume_ts); LUA->SetField(-2, "volume");
+		LUA->PushBool(clients[i].talking); LUA->SetField(-2, "talking");
+		std::string id = std::to_string(i);
+		//sprintf_s(it, sizeof(it), "%d", i);
+		LUA->SetField(-2, id.c_str());
 	}
 
 	return 1;
@@ -550,6 +625,7 @@ GMOD_MODULE_OPEN()
 	LUA->PushCFunction(gs_getTslibVersion); LUA->SetField(-2, "getVersion");
 	//LUA->PushCFunction(gs_getVolumeOf); LUA->SetField(-2, "getVolumeOf");
 	LUA->PushCFunction(gs_getAllID); LUA->SetField(-2, "getAllID");
+	LUA->PushCFunction(gs_tick); LUA->SetField(-2, "tick");
 	LUA->SetField(-2, "tslib");
 	LUA->Pop();
 
