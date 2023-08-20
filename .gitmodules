@@ -1,3 +1,9 @@
 [submodule "garrysmod_common"]
 	path = garrysmod_common
 	url = https://github.com/danielga/garrysmod_common
+[submodule "source/GspeakSharedCode"]
+	path = source/shared
+	url = https://github.com/Thendon/GspeakSharedCode
+[submodule "source/shared"]
+	path = source/shared
+	url = https://github.com/Thendon/GspeakSharedCode.git
