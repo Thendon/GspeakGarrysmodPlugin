@@ -17,34 +17,36 @@
 using namespace GarrysMod::Lua;
 using namespace Gspeak;
 
-//move this to lua?
-struct Client_local
+namespace Gspeak
 {
-	int clientID;
-	int entID;
-	int radioID;
-};
+	//move this to lua?
+	struct Client_local
+	{
+		int clientID;
+		int entID;
+		int radioID;
+	};
 
-//struct AudioSource* sources;
+	struct CommandCallback
+	{
+		Command key;
+		int callback;
+
+		CommandCallback(Command key, int callback) : key(key), callback(callback) {}
+	};
+	
+	enum class LogType
+	{
+		Log,
+		Warning,
+		Error,
+		Success
+	};
+}
 
 Client_local* clients_local;
-
-struct CMD
-{
-	int key;
-	int callback;
-
-	CMD(int key, int callback) : key(key), callback(callback) {}
-};
-
-std::list<CMD> commandList;
+std::list<CommandCallback> commandList;
 std::list<short> avaliableSpots;
-
-HANDLE hMapFileO;
-HANDLE hMapFileV;
-
-TCHAR clientName[] = TEXT("Local\\GMapO");
-TCHAR statusName[] = TEXT("Local\\GMapV");
 
 //*************************************
 // GSPEAK FUNCTIONS
@@ -55,7 +57,7 @@ void gs_printError(GarrysMod::Lua::ILuaBase* LUA, char* error_string, int error_
 	LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
 	LUA->GetField(-1, "print");
 	LUA->PushString(error_string);
-
+	
 	if (error_code == -1)
 	{
 		LUA->Call(1, 0);
@@ -65,6 +67,37 @@ void gs_printError(GarrysMod::Lua::ILuaBase* LUA, char* error_string, int error_
 		LUA->PushNumber(error_code);
 		LUA->Call(2, 0);
 	}
+	LUA->Pop();
+}
+
+void gs_log(GarrysMod::Lua::ILuaBase* LUA, char* msg, LogType type = LogType::Log)
+{
+	LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
+	LUA->GetField(-1, "gspeak");
+	switch (type)
+	{
+	case LogType::Warning:
+		LUA->GetField(-1, "ConsoleWarning");
+		break;
+	case LogType::Error:
+		LUA->GetField(-1, "ConsoleError");
+		break;
+	case LogType::Success:
+		LUA->GetField(-1, "ConsoleSuccess");
+		break;
+	case LogType::Log:
+	default:
+		LUA->GetField(-1, "ConsoleLog");
+		break;
+	}
+
+	//8 = tag | 1 = \0
+	char* log = new char[sizeof(msg) + 8 + 1];
+	strcpy(log, "[tslib] ");
+	strcat(log, msg);
+
+	LUA->PushString(log);
+	LUA->Call(1, 0);
 	LUA->Pop();
 }
 
@@ -106,59 +139,23 @@ bool gs_openMapFile(GarrysMod::Lua::ILuaBase* LUA, HANDLE* hMapFile, TCHAR* name
 
 LUA_FUNCTION(gs_connectTS)
 {
-	if (Shared::openClients() != SUCCESS)
+	if (Shared::openClients() != HMAP_RESULT::SUCCESS)
 	{
 		gs_printError(LUA, "[Gspeak] mapview error ", GetLastError());
 		LUA->PushBool(false);
 		return 1;
 	}
 
-	if (Shared::openStatus() != SUCCESS)
+	if (Shared::openStatus() != HMAP_RESULT::SUCCESS)
 	{
 		gs_printError(LUA, "[Gspeak] mapview error ", GetLastError());
 		LUA->PushBool(false);
 		return 1;
 	}
 
-	/*if (hMapFileO != NULL && hMapFileV != NULL)
-	{
-		LUA->PushBool(true);
-		return 1;
-	}
-
-	if (!gs_openMapFile(LUA, &hMapFileO, clientName, sizeof(Client) * PLAYER_MAX))
-	{
-		LUA->PushBool(false);
-		return 1;
-	}
-	Shared::clients() = (Client*)MapViewOfFile(hMapFileO, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Client) * PLAYER_MAX);*/
-	clients_local = new Client_local[PLAYER_MAX]; //(Clients_local*)malloc(sizeof(Clients_local) * PLAYER_MAX);
+	clients_local = new Client_local[PLAYER_MAX];
 	for (short i = 0; i < PLAYER_MAX; i++)
 		avaliableSpots.push_back(i);
-
-	/*if (Shared::clients() == NULL)
-	{
-		gs_printError(LUA, "[Gspeak] mapview error ", GetLastError());
-		CloseHandle(hMapFileO);
-		hMapFileO = NULL;
-		LUA->PushBool(false);
-		return 1;
-	}*/
-
-	/*if (!gs_openMapFile(LUA, &hMapFileV, statusName, sizeof(Status)))
-	{
-		LUA->PushBool(false);
-		return 1;
-	}
-	Shared::status() = (Status*)MapViewOfFile(hMapFileV, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Status));
-	if (Shared::status() == NULL)
-	{
-		gs_printError(LUA, "[Gspeak] mapview error ", GetLastError());
-		CloseHandle(hMapFileV);
-		hMapFileV = NULL;
-		LUA->PushBool(false);
-		return 1;
-	}*/
 
 	Shared::status()->tslibV = TSLIB_VERSION;
 
@@ -171,20 +168,19 @@ void gs_discoTS()
 	Shared::status()->tslibV = 0;
 
 	Shared::closeClients();
-	Shared::closeStatus();/*
-	UnmapViewOfFile(Shared::clients());
-	CloseHandle(hMapFileO);
-	hMapFileO = NULL;
-	Shared::clients() = NULL;*/
+	Shared::closeStatus();
+
 	if (clients_local != NULL)
 	{
 		delete[] clients_local;
 		clients_local = NULL;
 	}
-	/*UnmapViewOfFile(Shared::status());
-	CloseHandle(hMapFileV);
-	hMapFileV = NULL;
-	Shared::status() = NULL;*/
+}
+
+LUA_FUNCTION(gs_discoTS)
+{
+	gs_discoTS();
+	return 0;
 }
 
 int gs_takeAvaliableSpot()
@@ -260,19 +256,11 @@ void gs_addAvaliableSpot(int index)
 
 LUA_FUNCTION(gs_sendSettings)
 {
-	//LUA->CheckType(1, GarrysMod::Lua::Type::STRING); char* password = (char*)LUA->GetString(1);
-	LUA->CheckType(2, GarrysMod::Lua::Type::NUMBER); short radio_downsampler = (short)LUA->GetNumber(1);
-	LUA->CheckType(3, GarrysMod::Lua::Type::NUMBER); short radio_distortion = (short)LUA->GetNumber(2);
-	LUA->CheckType(4, GarrysMod::Lua::Type::NUMBER); float radio_volume = (float)LUA->GetNumber(3);
-	LUA->CheckType(5, GarrysMod::Lua::Type::NUMBER); float radio_volume_noise = (float)LUA->GetNumber(4);
+	LUA->CheckType(1, GarrysMod::Lua::Type::NUMBER); short radio_downsampler = (short)LUA->GetNumber(1);
+	LUA->CheckType(2, GarrysMod::Lua::Type::NUMBER); short radio_distortion = (short)LUA->GetNumber(2);
+	LUA->CheckType(3, GarrysMod::Lua::Type::NUMBER); float radio_volume = (float)LUA->GetNumber(3);
+	LUA->CheckType(4, GarrysMod::Lua::Type::NUMBER); float radio_volume_noise = (float)LUA->GetNumber(4);
 
-	/*if (strlen(password) >= PASS_BUF)
-	{
-		LUA->PushBool(false);
-		return 1;
-	}*/
-
-	//strcpy_s(Shared::status()->password, PASS_BUF * sizeof(char), password);
 	Shared::status()->radioEffect.downsampler = radio_downsampler > 0 ? radio_downsampler : 1;
 	Shared::status()->radioEffect.distortion = radio_distortion;
 	Shared::status()->radioEffect.volume = radio_volume;
@@ -282,15 +270,30 @@ LUA_FUNCTION(gs_sendSettings)
 	return 1;
 }
 
-void gs_pushCMD(GarrysMod::Lua::ILuaBase* LUA, int key, int callback)
+bool gs_pushCMD(GarrysMod::Lua::ILuaBase* LUA, Command key, int callback, const std::string* args = NULL)
 {
 	if (commandList.size() >= CMD_BUF)
 	{
 		gs_printError(LUA, "CommandList full - check for sendName / forceMove spam");
-		return;
+		return false;
 	}
-	CMD cmd(key, callback);
+
+	if (args != NULL)
+	{
+		if (args->length() >= CMD_ARGS_BUF)
+			return false;
+
+		strcpy_s(Shared::status()->commandArgs, CMD_ARGS_BUF * sizeof(char), args->c_str());
+	}
+	else
+	{
+		strcpy_s(Shared::status()->commandArgs, CMD_ARGS_BUF * sizeof(char), "");
+	}
+
+	CommandCallback cmd(key, callback);
 	commandList.push_back(cmd);
+
+	return true;
 }
 
 LUA_FUNCTION(gs_sendName)
@@ -304,19 +307,24 @@ LUA_FUNCTION(gs_sendName)
 		callback = LUA->ReferenceCreate();
 	}
 
-	if (strlen(name) > NAME_BUF - 2)
-		name[NAME_BUF - 2] = '\0';
+	if (strlen(name) >= NAME_BUF - 1)
+		name[NAME_BUF - 1] = '\0';
 
-	strcpy_s(Shared::status()->name, NAME_BUF * sizeof(char), name);
-	gs_pushCMD(LUA, (int)CMD_RENAME, callback);
-	return 0;
+	//strcpy_s(Shared::status()->name, NAME_BUF * sizeof(char), name);
+	if (!gs_pushCMD(LUA, Command::Rename, callback, &std::string(name)))
+	{
+		LUA->PushBool(false);
+		return 1;
+	}
+	LUA->PushBool(true);
+	return 1;
 }
 
 LUA_FUNCTION(gs_compareName)
 {
 	LUA->CheckType(1, GarrysMod::Lua::Type::STRING); char* name = (char*)LUA->GetString(1);
-	if (strlen(name) > NAME_BUF - 2)
-		name[NAME_BUF - 2] = '\0';
+	if (strlen(name) >= NAME_BUF - 1)
+		name[NAME_BUF - 1] = '\0';
 
 	if (strcmp(Shared::status()->name, name) == 0)
 		LUA->PushBool(true);
@@ -328,28 +336,48 @@ LUA_FUNCTION(gs_compareName)
 LUA_FUNCTION(gs_forceMove)
 {
 	LUA->CheckType(1, GarrysMod::Lua::Type::FUNCTION); LUA->Push(1); int callback = LUA->ReferenceCreate();
-	gs_pushCMD(LUA, (int)CMD_FORCEMOVE, callback);
-	return 0;
+	LUA->CheckType(2, GarrysMod::Lua::Type::STRING); char* password = (char*)LUA->GetString(2);
+	LUA->CheckType(3, GarrysMod::Lua::Type::STRING); char* channelName = (char*)LUA->GetString(3);
+
+	std::string commandArgs(password);
+	commandArgs.append(";");
+	commandArgs.append(channelName);
+
+	if (!gs_pushCMD(LUA, Command::ForceMove, callback, &commandArgs))
+	{
+		LUA->PushBool(false);
+		return 1;
+	}
+
+	LUA->PushBool(true);
+	return 1;
+}
+
+LUA_FUNCTION(gs_forceKick)
+{
+	LUA->CheckType(1, GarrysMod::Lua::Type::FUNCTION); LUA->Push(1); int callback = LUA->ReferenceCreate();
+
+	if (!gs_pushCMD(LUA, Command::ForceKick, callback))
+	{
+		LUA->PushBool(false);
+		return 1;
+	}
+
+	LUA->PushBool(true);
+	return 1;
 }
 
 LUA_FUNCTION(gs_update)
 {
-	//Free reference
-	/*if (Shared::status()->command == -10)
+	if (Shared::status()->command < Command::Clear)
 	{
-		LUA->ReferenceFree(commandList.front().callback);
-		Shared::status()->command = 0;
-	}*/
-	if (Shared::status()->command < 0)
-	{
-		//execute callback function of given cmd; -2 = ERROR; -1 = SUCCESS
-		CMD result = commandList.front();
+		CommandCallback result = commandList.front();
 
 		if (result.callback >= 0)
 		{
 			LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
 			LUA->ReferencePush(result.callback);
-			LUA->PushBool((bool)(Shared::status()->command == -1));
+			LUA->PushBool((bool)(Shared::status()->command == Command::Success));
 			LUA->Call(1, 0);
 			LUA->Pop();
 
@@ -359,11 +387,12 @@ LUA_FUNCTION(gs_update)
 		//Set ready for next cmd
 		commandList.pop_front();
 
-		Shared::status()->command = 0;
+		Shared::status()->command = Command::Clear;
+		strcpy_s(Shared::status()->commandArgs, CMD_ARGS_BUF * sizeof(char), "");
 	}
 
 	//Ready for next in list
-	if (Shared::status()->command == 0 && commandList.size() > 0)
+	if (Shared::status()->command == Command::Clear && commandList.size() > 0)
 	{
 		Shared::status()->command = commandList.front().key;
 	}
@@ -402,6 +431,7 @@ LUA_FUNCTION(gs_sendPos)
 	LUA->CheckType(5, GarrysMod::Lua::Type::NUMBER); float y = (float)LUA->GetNumber(5);
 	LUA->CheckType(6, GarrysMod::Lua::Type::NUMBER); float z = (float)LUA->GetNumber(6);
 	LUA->CheckType(7, GarrysMod::Lua::Type::BOOL); bool isRadio = (bool)LUA->GetBool(7);
+	//LUA->CheckType(7, GarrysMod::Lua::Type::BOOL); int effect = (int)LUA->GetNumber(7);
 
 	int radioID = -1;
 	if (isRadio == true)
@@ -409,8 +439,6 @@ LUA_FUNCTION(gs_sendPos)
 		LUA->CheckType(8, GarrysMod::Lua::Type::NUMBER); radioID = (int)LUA->GetNumber(8);
 	}
 
-	//bool exist = false;
-	//int i = gs_searchPlayer(clientID, &exist);
 	int index = Shared::findClientIndex(clientID);
 
 	if (index != -1)
@@ -442,7 +470,7 @@ LUA_FUNCTION(gs_sendPos)
 	Shared::clients()[index].pos[0] = x;
 	Shared::clients()[index].pos[1] = z;
 	Shared::clients()[index].pos[2] = y;
-	Shared::clients()[index].effect = isRadio ? Radio : None;
+	Shared::clients()[index].effect = isRadio ? VoiceEffect::Radio : VoiceEffect::None;
 
 	clients_local[index].clientID = clientID;
 	clients_local[index].entID = entID;
@@ -601,12 +629,11 @@ LUA_FUNCTION(gs_getAllID)
 		
 		LUA->CreateTable();
 		LUA->PushNumber(clients_local[i].entID); LUA->SetField(-2, "ent_id");
-		LUA->PushBool(Shared::clients()[i].effect == Radio); LUA->SetField(-2, "radio");
+		LUA->PushBool(Shared::clients()[i].effect == VoiceEffect::Radio); LUA->SetField(-2, "radio");
 		LUA->PushNumber(clients_local[i].radioID); LUA->SetField(-2, "radio_id");
 		LUA->PushNumber(Shared::clients()[i].volume_ts); LUA->SetField(-2, "volume");
 		LUA->PushBool(Shared::clients()[i].talking); LUA->SetField(-2, "talking");
 		std::string id = std::to_string(i);
-		//sprintf_s(it, sizeof(it), "%d", i);
 		LUA->SetField(-2, id.c_str());
 	}
 
@@ -622,11 +649,13 @@ GMOD_MODULE_OPEN()
 	LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
 	LUA->CreateTable();
 	LUA->PushCFunction(gs_connectTS); LUA->SetField(-2, "connectTS");
+	LUA->PushCFunction(gs_discoTS); LUA->SetField(-2, "discoTS");
 	LUA->PushCFunction(gs_sendSettings); LUA->SetField(-2, "sendSettings");
 	LUA->PushCFunction(gs_sendName); LUA->SetField(-2, "sendName");
 	LUA->PushCFunction(gs_getName); LUA->SetField(-2, "getName");
 	LUA->PushCFunction(gs_compareName); LUA->SetField(-2, "compareName");
 	LUA->PushCFunction(gs_forceMove); LUA->SetField(-2, "forceMove");
+	LUA->PushCFunction(gs_forceKick); LUA->SetField(-2, "forceKick");
 	LUA->PushCFunction(gs_update); LUA->SetField(-2, "update");
 	LUA->PushCFunction(gs_sendClientPos); LUA->SetField(-2, "sendClientPos");
 	LUA->PushCFunction(gs_sendPos); LUA->SetField(-2, "sendPos");
