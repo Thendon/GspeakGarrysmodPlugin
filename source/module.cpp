@@ -1,10 +1,10 @@
 /*
-* Gspeak 3.0
+* Gspeak 3.1
 * by Thendon.exe
 * Sneaky Rocks
 */
 
-#define TSLIB_VERSION 3000
+#define TSLIB_VERSION 3100
 
 #include "GarrysMod/Lua/Interface.h"
 #include <list>
@@ -20,14 +20,6 @@ using namespace std::literals::string_literals;
 
 namespace Gspeak
 {
-	//move this to lua?
-	/*struct Client_local
-	{
-		int clientID;
-		int entID;
-		int radioID;
-	};*/
-
 	struct CommandCallback
 	{
 		Command key;
@@ -138,6 +130,15 @@ bool gs_openMapFile(GarrysMod::Lua::ILuaBase* LUA, HANDLE* hMapFile, TCHAR* name
 
 LUA_FUNCTION(gs_connectTS)
 {
+	if (Shared::status() != NULL)
+	{
+		//gs_log(LUA, "connecting to teamspeak not possible (already connect)", Gspeak::LogType::Warning);
+		LUA->PushBool(true);
+		return 1;
+	}
+
+	gs_log(LUA, "connect gmod to teamspeak");
+
 	if (Shared::openClients() != HMAP_RESULT::SUCCESS)
 	{
 		gs_printError(LUA, "[Gspeak] mapview error ", GetLastError());
@@ -162,8 +163,13 @@ LUA_FUNCTION(gs_connectTS)
 	return 1;
 }
 
-void gs_discoTS()
+void gs_closeModule(GarrysMod::Lua::ILuaBase* LUA)
 {
+	if (Shared::status() == NULL)
+		return;
+
+	gs_log(LUA, "disconnect gmod from teamspeak");
+
 	Shared::status()->tslibV = 0;
 
 	Shared::closeClients();
@@ -178,7 +184,7 @@ void gs_discoTS()
 
 LUA_FUNCTION(gs_discoTS)
 {
-	gs_discoTS();
+	gs_closeModule(LUA);
 	return 0;
 }
 
@@ -222,57 +228,6 @@ void gs_addAvaliableSpot(int index)
 	avaliableSpots.push_back((short)index);
 }
 
-//int gs_searchPlayerObsolete(int clientID, bool* exist)
-//{
-//	int free_spot = -1;
-//	int del_spot = -1;
-//	int spot = 0;
-//
-//	for (spot; Shared::clients()[spot].clientID != 0 && spot < PLAYER_MAX; spot++)
-//	{
-//		//return already claimed spot
-//		if (Shared::clients()[spot].clientID == clientID)
-//		{
-//			*exist = true;
-//			return spot;
-//		}
-//
-//		//Check if spot free
-//		if (Shared::clients()[spot].clientID == -1)
-//		{
-//			//set first free spot
-//			if (free_spot == -1)
-//				free_spot = spot;
-//			//set first deletable spot
-//			if (del_spot == -1)
-//				del_spot = spot;
-//		}
-//
-//		//Check if spot not free
-//		if (Shared::clients()[spot].clientID > -1)
-//			//reset deletable spot
-//			if (del_spot != -1)
-//				del_spot = -1;
-//	}
-//
-//	//clear spots from first deletable spot to next clientID = 0
-//	if (del_spot != -1)
-//		for (int i = del_spot; del_spot <= spot && i < PLAYER_MAX; i++)
-//		{
-//			Shared::clients()[i].clientID = 0;
-//			clients_local[i].clientID = 0;
-//		}
-//
-//	//return free spot
-//	if (free_spot > -1)
-//		return free_spot;
-//	//return first avaliable spot if nothing was deleted
-//	if (del_spot == -1)
-//		return spot;
-//	//return first deleted spot
-//	return del_spot;
-//}
-
 LUA_FUNCTION(gs_sendSettings)
 {
 	LUA->CheckType(1, GarrysMod::Lua::Type::NUMBER); short radio_downsampler = (short)LUA->GetNumber(1);
@@ -280,10 +235,26 @@ LUA_FUNCTION(gs_sendSettings)
 	LUA->CheckType(3, GarrysMod::Lua::Type::NUMBER); float radio_volume = (float)LUA->GetNumber(3);
 	LUA->CheckType(4, GarrysMod::Lua::Type::NUMBER); float radio_volume_noise = (float)LUA->GetNumber(4);
 
+	LUA->CheckType(5, GarrysMod::Lua::Type::NUMBER); double water_scale = (double)LUA->GetNumber(5);
+	LUA->CheckType(6, GarrysMod::Lua::Type::NUMBER); double water_smooth = (double)LUA->GetNumber(6);
+	LUA->CheckType(7, GarrysMod::Lua::Type::NUMBER); float water_boost = (float)LUA->GetNumber(7);
+
+	LUA->CheckType(8, GarrysMod::Lua::Type::NUMBER); double wall_scale = (double)LUA->GetNumber(8);
+	LUA->CheckType(9, GarrysMod::Lua::Type::NUMBER); double wall_smooth = (double)LUA->GetNumber(9);
+	LUA->CheckType(10, GarrysMod::Lua::Type::NUMBER); float wall_boost = (float)LUA->GetNumber(10);
+
 	Shared::status()->radioEffect.downsampler = radio_downsampler > 0 ? radio_downsampler : 1;
 	Shared::status()->radioEffect.distortion = radio_distortion;
 	Shared::status()->radioEffect.volume = radio_volume;
 	Shared::status()->radioEffect.noise = radio_volume_noise;
+
+	Shared::status()->waterEffect.scale = water_scale;
+	Shared::status()->waterEffect.smooth = water_smooth;
+	Shared::status()->waterEffect.boost = water_boost;
+
+	Shared::status()->wallEffect.scale = wall_scale;
+	Shared::status()->wallEffect.smooth = wall_smooth;
+	Shared::status()->wallEffect.boost = wall_boost;
 
 	return 0;
 }
@@ -456,7 +427,10 @@ LUA_FUNCTION(gs_sendPlayer)
 			return 1;
 		}
 
+		//todo init new player here (all members)
 		Shared::clients()[index].clientID = clientID;
+		Shared::clients()[index].talking = false;
+		Shared::clients()[index].volume_ts = 0.0f;
 	}
 
 	Shared::clients()[index].volume_gm = volume;
@@ -464,9 +438,6 @@ LUA_FUNCTION(gs_sendPlayer)
 	Shared::clients()[index].pos[1] = z;
 	Shared::clients()[index].pos[2] = y;
 	Shared::clients()[index].effect = static_cast<VoiceEffect>(effect);
-
-	//todo init new player here (all members)
-	Shared::clients()[index].talking = false;
 
 	LUA->PushBool(true);
 	return 1;
@@ -505,121 +476,10 @@ LUA_FUNCTION(gs_getPlayerTeamspeakData)
 	}
 
 	LUA->PushNumber(volume);
-	LUA->PushNumber(talking);
+	LUA->PushBool(talking);
 
 	return 3;
 }
-
-//todo: 
-// * list of ents instead of players
-// * players are attached to ent
-// * mix player & ent signal effects
-//LUA_FUNCTION(gs_sendPos)
-//{
-//	LUA->CheckType(1, GarrysMod::Lua::Type::NUMBER); int clientID = (int)LUA->GetNumber(1);
-//	LUA->CheckType(2, GarrysMod::Lua::Type::NUMBER); float volume = (float)LUA->GetNumber(2);
-//	LUA->CheckType(3, GarrysMod::Lua::Type::NUMBER); int entID = (int)LUA->GetNumber(3);
-//	LUA->CheckType(4, GarrysMod::Lua::Type::NUMBER); float x = (float)LUA->GetNumber(4);
-//	LUA->CheckType(5, GarrysMod::Lua::Type::NUMBER); float y = (float)LUA->GetNumber(5);
-//	LUA->CheckType(6, GarrysMod::Lua::Type::NUMBER); float z = (float)LUA->GetNumber(6);
-//	LUA->CheckType(7, GarrysMod::Lua::Type::BOOL); bool isRadio = (bool)LUA->GetBool(7);
-//	//LUA->CheckType(7, GarrysMod::Lua::Type::BOOL); int effect = (int)LUA->GetNumber(7);
-//
-//	int radioID = -1;
-//	if (isRadio == true)
-//	{
-//		LUA->CheckType(8, GarrysMod::Lua::Type::NUMBER); radioID = (int)LUA->GetNumber(8);
-//	}
-//
-//	int index = Shared::findClientIndex(clientID);
-//
-//	if (index != -1)
-//	{
-//		//Update data
-//		if (clients_local[index].radioID == radioID && clients_local[index].entID == entID)
-//		{
-//			Shared::clients()[index].volume_gm = volume;
-//			Shared::clients()[index].pos[0] = x;
-//			Shared::clients()[index].pos[1] = z;
-//			Shared::clients()[index].pos[2] = y;
-//			return 0;
-//		}
-//		//Ignore further away data
-//		/*else*/ if (volume < Shared::clients()[index].volume_gm)
-//		{
-//			return 0;
-//		}
-//		//Override with closer data
-//	}
-//	else
-//	{
-//		//Add new data
-//		index = gs_takeAvaliableSpot();
-//	}
-//
-//	Shared::clients()[index].clientID = clientID;
-//	Shared::clients()[index].volume_gm = volume;
-//	Shared::clients()[index].pos[0] = x;
-//	Shared::clients()[index].pos[1] = z;
-//	Shared::clients()[index].pos[2] = y;
-//	Shared::clients()[index].effect = isRadio ? VoiceEffect::Radio : VoiceEffect::None;
-//	Shared::clients()[index].talking = false;
-//
-//	//gs_log(LUA, "add "s + std::to_string(index) + " "s + std::to_string(Shared::clients()[index].clientID));
-//
-//	clients_local[index].clientID = clientID;
-//	clients_local[index].entID = entID;
-//	clients_local[index].radioID = radioID;
-//
-//	LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
-//	LUA->GetField(-1, "gspeak");
-//	LUA->GetField(-1, "setHearable");
-//	LUA->PushNumber(entID);
-//	LUA->PushBool(true);
-//	LUA->Call(2, 0);
-//	LUA->Pop();
-//
-//	return 0;
-//}
-//
-////TODO: remove entid or radioid everywhere
-//LUA_FUNCTION(gs_delPos)
-//{
-//	LUA->CheckType(1, GarrysMod::Lua::Type::NUMBER); int entID = (int)LUA->GetNumber(1);
-//	LUA->CheckType(2, GarrysMod::Lua::Type::BOOL); bool isRadio = (bool)LUA->GetBool(2);
-//
-//	int radioID = -1;
-//	if (isRadio)
-//	{
-//		LUA->CheckType(3, GarrysMod::Lua::Type::NUMBER); radioID = (int)LUA->GetNumber(3);
-//	}
-//
-//	for (int i = 0; i < PLAYER_MAX; i++)
-//	{
-//		if (clients_local[i].entID == entID && clients_local[i].radioID == radioID)
-//		{
-//			int prevId = Shared::clients()[i].clientID;
-//			Shared::clients()[i].clientID = 0;
-//			//clients_local[i] = Client_local();
-//			clients_local[i].clientID = 0;
-//			clients_local[i].entID = 0;
-//			clients_local[i].radioID = 0;
-//			gs_addAvaliableSpot(i);
-//			//gs_log(LUA, "del "s + std::to_string(i) + " "s + std::to_string(Shared::clients()[i].clientID) + " "s + std::to_string(prevId));
-//			break;
-//		}
-//	}
-//
-//	LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
-//	LUA->GetField(-1, "gspeak");
-//	LUA->GetField(-1, "setHearable");
-//	LUA->PushNumber(entID);
-//	LUA->PushBool(false);
-//	LUA->Call(2, 0);
-//	LUA->Pop();
-//
-//	return 0;
-//}
 
 LUA_FUNCTION(gs_delAll)
 {
@@ -651,7 +511,7 @@ LUA_FUNCTION(gs_getInChannel)
 
 LUA_FUNCTION(gs_getArray)
 {
-	char it[3];
+	char it[4];
 	LUA->PushSpecial(GarrysMod::Lua::Type::TABLE);
 	LUA->CreateTable();
 	for (int i = 0; i < PLAYER_MAX; i++)
@@ -697,49 +557,6 @@ LUA_FUNCTION(gs_getTslibVersion)
 	return 1;
 }
 
-//LUA_FUNCTION(gs_tick)
-//{
-//	for (int i = 0; i < PLAYER_MAX; i++)
-//	{
-//		if (Shared::clients()[i].clientID == 0)
-//			continue;
-//
-//		LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
-//		LUA->GetField(-1, "gspeak");
-//		LUA->GetField(-1, "SetPlayerTeamspeakData");
-//		//LUA->PushNumber(clients_local[i].entID);
-//		LUA->PushNumber(Shared::clients()[i].volume_ts);
-//		LUA->PushBool(Shared::clients()[i].talking);
-//		LUA->Call(3, 0);
-//		LUA->Pop();
-//	}
-//	return 0;
-//}
-
-//obsolete
-//LUA_FUNCTION(gs_getAllID)
-//{
-//	//char it[3];
-//	LUA->PushSpecial(GarrysMod::Lua::Type::TABLE);
-//	LUA->CreateTable();
-//	for (int i = 0; i < PLAYER_MAX; i++)
-//	{
-//		if (Shared::clients()[i].clientID == 0)
-//			continue;
-//		
-//		LUA->CreateTable();
-//		LUA->PushNumber(clients_local[i].entID); LUA->SetField(-2, "ent_id");
-//		LUA->PushBool(Shared::clients()[i].effect == VoiceEffect::Radio); LUA->SetField(-2, "radio");
-//		LUA->PushNumber(clients_local[i].radioID); LUA->SetField(-2, "radio_id");
-//		LUA->PushNumber(Shared::clients()[i].volume_ts); LUA->SetField(-2, "volume");
-//		LUA->PushBool(Shared::clients()[i].talking); LUA->SetField(-2, "talking");
-//		std::string id = std::to_string(i);
-//		LUA->SetField(-2, id.c_str());
-//	}
-//
-//	return 1;
-//}
-
 //*************************************
 // REQUIRED GMOD FUNCTIONS
 //*************************************
@@ -758,8 +575,6 @@ GMOD_MODULE_OPEN()
 	LUA->PushCFunction(gs_forceKick); LUA->SetField(-2, "forceKick");
 	LUA->PushCFunction(gs_update); LUA->SetField(-2, "update");
 	LUA->PushCFunction(gs_sendClientPos); LUA->SetField(-2, "sendClientPos");
-	/*LUA->PushCFunction(gs_sendPos); LUA->SetField(-2, "sendPos");
-	LUA->PushCFunction(gs_delPos); LUA->SetField(-2, "delPos");*/
 	LUA->PushCFunction(gs_sendPlayer); LUA->SetField(-2, "sendPlayer");
 	LUA->PushCFunction(gs_removePlayer); LUA->SetField(-2, "removePlayer");
 	LUA->PushCFunction(gs_delAll); LUA->SetField(-2, "delAll");
@@ -769,10 +584,7 @@ GMOD_MODULE_OPEN()
 	LUA->PushCFunction(gs_talkCheck); LUA->SetField(-2, "talkCheck");
 	LUA->PushCFunction(gs_getGspeakVersion); LUA->SetField(-2, "getGspeakVersion");
 	LUA->PushCFunction(gs_getTslibVersion); LUA->SetField(-2, "getVersion");
-	//LUA->PushCFunction(gs_getVolumeOf); LUA->SetField(-2, "getVolumeOf");
-	//LUA->PushCFunction(gs_getAllID); LUA->SetField(-2, "getAllID");
 	LUA->PushCFunction(gs_getPlayerTeamspeakData); LUA->SetField(-2, "getPlayerData");
-	//LUA->PushCFunction(gs_tick); LUA->SetField(-2, "tick");
 	LUA->SetField(-2, "tslib");
 	LUA->Pop();
 
@@ -783,6 +595,6 @@ GMOD_MODULE_OPEN()
 
 GMOD_MODULE_CLOSE()
 {
-	gs_discoTS();
+	gs_closeModule(LUA);
 	return 0;
 }
